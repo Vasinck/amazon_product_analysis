@@ -1,16 +1,7 @@
 import os
 import csv
-from openai import OpenAI
-import base64
+from dashscope import MultiModalConversation
 import analysis_config as config
-
-# base64编码图片
-def encode_image(image_path: list):
-    base64_images = []
-    for img in image_path:
-        with open(img, "rb") as image_file:
-            base64_images.append(base64.b64encode(image_file.read()).decode("utf-8"))
-    return base64_images
 
 # 使用通义千问模型获取竞品分析
 def get_analyze(my_image_path, amazon_image_path):
@@ -19,40 +10,35 @@ def get_analyze(my_image_path, amazon_image_path):
     结论：YES/NO
     理由：XXXXXX
     '''
-    base64_images = encode_image([my_image_path, amazon_image_path])
     
-    client = OpenAI(
+    # 构建图片路径格式
+    my_image_url = f"file://{os.path.abspath(my_image_path)}"
+    amazon_image_url = f"file://{os.path.abspath(amazon_image_path)}"
+    
+    messages = [
+        {
+            "role": "system",
+            "content": [{"text": config.SYSTEM_PROMPT}]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"image": my_image_url},
+                {"image": amazon_image_url},
+                {"text": config.USER_PROMPT},
+                {"text": result_prompt}
+            ]
+        }
+    ]
+    
+    response = MultiModalConversation.call(
         api_key=config.API_KEY,
-        base_url=config.BASE_URL,
-    )
-    
-    completion = client.chat.completions.create(
         model=config.MODEL_NAME,
-        messages=[
-            {
-                "role": "system",
-                "content": [{"type":"text","text": config.SYSTEM_PROMPT}]
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{base64_images[0]}"},
-                    },
-                    {
-                        "type": "image_url",
-                        "image_url": {"url": f"data:image/png;base64,{base64_images[1]}"},
-                    },
-                    {"type": "text", "text": config.USER_PROMPT},
-                    {"type": "text", "text": '完成以上所有工作后，得出最终的结论。如果是竞品，就输出YES，如果不是，就输出NO。'},
-                    {"type": "text", "text": result_prompt},
-                ],
-            }
-        ],
+        messages=messages,
+        vl_high_resolution_images=True
     )
     
-    return completion.choices[0].message.content.strip()
+    return response["output"]["choices"][0]["message"]["content"][0]["text"].strip()
 
 # 结论提取
 def get_conclusion(content):
@@ -114,6 +100,8 @@ def main():
                     content = get_analyze(my_image['path'], amazon_image['path'])
                     conclusion = get_conclusion(content)
                     row.append(conclusion)
+                    # 打印token使用情况，如果接口返回了这个信息
+                    # print(f"Token用量: 输入Token: {response.usage.get('input_tokens', 'N/A')}, 图像Token: {response.usage.get('image_tokens', 'N/A')}")
                 except Exception as e:
                     print(f"错误: {str(e)}")
                     row.append("ERROR")
