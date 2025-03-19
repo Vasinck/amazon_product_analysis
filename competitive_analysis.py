@@ -5,12 +5,6 @@ import analysis_config as config
 
 # 使用通义千问模型获取竞品分析
 def get_analyze(my_image_path, amazon_image_path):
-    result_prompt = '''
-    输出格式如下
-    结论：YES/NO
-    理由：XXXXXX
-    '''
-    
     # 构建图片路径格式
     my_image_url = f"file://{os.path.abspath(my_image_path)}"
     amazon_image_url = f"file://{os.path.abspath(amazon_image_path)}"
@@ -25,8 +19,7 @@ def get_analyze(my_image_path, amazon_image_path):
             "content": [
                 {"image": my_image_url},
                 {"image": amazon_image_url},
-                {"text": config.USER_PROMPT},
-                {"text": result_prompt}
+                {"text": config.USER_PROMPT}
             ]
         }
     ]
