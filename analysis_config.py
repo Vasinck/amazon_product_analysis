@@ -5,7 +5,8 @@ MODEL_NAME = 'qwen2.5-vl-72b-instruct'
 
 # 图片目录配
 IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png']
-IMAGE_DIRECTORY = './temp'
+AMAZON_IMAGE_DIRECTORY = './images'
+MY_IMAGE_DIRECTORY = './my_product_image'
 
 # 标注提示配置
 SYSTEM_PROMPT = "You are a helpful assistant."

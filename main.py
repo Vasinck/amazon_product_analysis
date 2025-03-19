@@ -233,7 +233,7 @@ def open_amazon(driver, url="https://www.amazon.com", wait_time=15):
             print("亚马逊网站加载成功")
             
             # 添加随机延迟使自动化行为不易被检测
-            random_sleep(2, 4)
+            random_sleep(15, 20)
             return True
         else:
             print("亚马逊logo未找到，但页面已加载")
@@ -390,7 +390,7 @@ def extract_products(driver, search_term, max_products=10):
     print(f"提取'{search_term}'的最多 {max_products} 个产品信息")
     
     # 确保存放图片的目录存在
-    base_dir = "qwen_api/images"
+    base_dir = "images"
     search_dir = os.path.join(base_dir, search_term)
     os.makedirs(search_dir, exist_ok=True)
     
@@ -481,10 +481,10 @@ def main():
     print("启动亚马逊爬虫")
     
     # 搜索商品列表
-    search_terms = ["laptop", "mouse", "keyboard", "monitor", "headphones"]
+    search_terms = ["younger star lights", "hopolon", "hopolon easter lights"]
     
     # 确保主要图片目录存在
-    base_dir = "qwen_api/images"
+    base_dir = "images"
     os.makedirs(base_dir, exist_ok=True)
     
     try:
