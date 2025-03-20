@@ -1,5 +1,5 @@
 # 通义千问API配置
-API_KEY = 'sk-c66b5d90099c4a2f97bb29c4aeb1d98c'
+API_KEY = 'xxx'
 BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'
 MODEL_NAME = 'qwen2.5-vl-72b-instruct' #  'qvq-72b-preview'
 
