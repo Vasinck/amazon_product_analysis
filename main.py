@@ -15,8 +15,8 @@ from selenium.common.exceptions import (
     StaleElementReferenceException
 )
 import requests
-from urllib.parse import urlparse, unquote
 from contextlib import contextmanager
+from get_my_product_name import extract_my_product_name
 
 # 尝试导入fake_useragent，如果不可用则使用备用用户代理列表
 try:
@@ -359,11 +359,26 @@ def search_amazon(driver, search_term, wait_time=15):
             print(f"JavaScript搜索注入失败: {e}")
             return False
 
-def download_image(image_url, folder_path, product_number):
-    """下载图片并保存到指定文件夹"""
+def download_image(image_url, folder_path, product_title, product_number):
+    """下载图片并保存到指定文件夹，使用产品标题作为文件名"""
+    product_title = product_title.lower()
     try:
-        # 创建图片文件名
-        image_filename = f"产品{product_number}.jpg"
+        # 清理标题，将非下划线的符号替换为下划线
+        import re
+        clean_title = re.sub(r'[^\w\s]', '_', product_title)  # 将非字母数字下划线的字符替换为下划线
+        clean_title = re.sub(r'\s+', '_', clean_title)  # 将空格替换为下划线
+        
+        # 如果标题过长，截取一部分以防文件名过长
+        if len(clean_title) > 100:
+            clean_title = clean_title[:100]
+        
+        # 创建图片文件名 - 使用产品标题
+        image_filename = f"{clean_title}.jpg"
+        
+        # 如果出现任何错误，回退到编号命名
+        if not clean_title:
+            image_filename = f"产品{product_number}.jpg"
+        
         image_path = os.path.join(folder_path, image_filename)
         
         # 确保文件夹存在
@@ -375,7 +390,7 @@ def download_image(image_url, folder_path, product_number):
             with open(image_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
-            print(f"图片成功保存为 {image_path}")
+            print(f"图片成功保存为 {image_filename}")
             return True
         else:
             print(f"下载图片失败，状态码: {response.status_code}")
@@ -455,9 +470,9 @@ def extract_products(driver, search_term, max_products=10):
                         
                 product_data['image_url'] = src
                 
-                # 下载图片
+                # 下载图片，现在使用标题作为文件名
                 if src and 'title' in product_data:
-                    if download_image(src, search_dir, count + 1):
+                    if download_image(src, search_dir, product_data['title'], count + 1):
                         product_data['image_saved'] = True
                     else:
                         product_data['image_saved'] = False
@@ -481,7 +496,7 @@ def main():
     print("启动亚马逊爬虫")
     
     # 搜索商品列表
-    search_terms = ["younger star lights", "hopolon", "hopolon easter lights"]
+    search_terms = extract_my_product_name('./红白蓝五星窗户灯词库_更新_20250318_151413.xlsx')
     
     # 确保主要图片目录存在
     base_dir = "images"

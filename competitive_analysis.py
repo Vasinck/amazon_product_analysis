@@ -2,9 +2,10 @@ import os
 import csv
 from dashscope import MultiModalConversation
 import analysis_config as config
+from get_keyword import get_keyword
 
 # 使用通义千问模型获取竞品分析
-def get_analyze(my_image_path, amazon_image_path):
+def get_img_analyze(my_image_path, amazon_image_path):
     # 构建图片路径格式
     my_image_url = f"file://{os.path.abspath(my_image_path)}"
     amazon_image_url = f"file://{os.path.abspath(amazon_image_path)}"
@@ -31,12 +32,18 @@ def get_analyze(my_image_path, amazon_image_path):
         vl_high_resolution_images=True
     )
     
-    return response["output"]["choices"][0]["message"]["content"][0]["text"].strip()
+    return get_img_conclusion(response["output"]["choices"][0]["message"]["content"][0]["text"].strip())
 
 # 结论提取
-def get_conclusion(content):
+def get_img_conclusion(content):
     conclusion = content.split('\n')[0].split('：')[-1].strip()
     return conclusion
+
+def get_title_analyze(my_words, title):
+    for word in my_words.split(' '):
+        if word not in title:
+            return 'NO'
+    return 'YES'
 
 # 从文件名中提取商品名称（去掉扩展名）
 def get_product_name(filename):
@@ -50,9 +57,9 @@ def main():
             my_images.append({
                 'path': os.path.join(config.MY_IMAGE_DIRECTORY, file),
                 'filename': file,
-                'product_name': get_product_name(file)
+                'product_name': get_product_name(file),
+                'key_words': get_keyword(config.API_KEY, config.BASE_URL, 'qwen-max-2025-01-25', get_product_name(file))
             })
-    
     # 创建CSV文件
     with open('comparison_results.csv', 'w', newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
@@ -90,11 +97,14 @@ def main():
                 print(f"对比: {my_image['filename']} vs {product_name}/{amazon_image['filename']}")
                 
                 try:
-                    content = get_analyze(my_image['path'], amazon_image['path'])
-                    conclusion = get_conclusion(content)
+                    img_conclusion = get_img_analyze(my_image['path'], amazon_image['path'])
+                    title_conclusion = get_title_analyze(my_image['key_words'], amazon_image['filename'])
+                    conclusion = 'YES' if (title_conclusion, img_conclusion) == ('YES', 'YES') else 'NO'
+                    if conclusion == 'YES':
+                        print('是竞品')
+                    else:
+                        print('不是竞品')
                     row.append(conclusion)
-                    # 打印token使用情况，如果接口返回了这个信息
-                    # print(f"Token用量: 输入Token: {response.usage.get('input_tokens', 'N/A')}, 图像Token: {response.usage.get('image_tokens', 'N/A')}")
                 except Exception as e:
                     print(f"错误: {str(e)}")
                     row.append("ERROR")
