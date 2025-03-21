@@ -1,0 +1,5 @@
+selenium
+pandas
+requests
+openai
+dashscope

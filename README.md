@@ -21,19 +21,19 @@
 ## 依赖库
 
 ```
-selenium==4.10.0
-pandas==1.5.3
-requests==2.28.2
-openai==1.3.0
-dashscope==1.10.0
+selenium
+pandas
+requests
+openai
+dashscope
 ```
 
 ## 安装步骤
 
 1. 克隆或下载本项目到本地
    ```
-   git clone https://github.com/yourusername/amazon-product-analysis.git
-   cd amazon-product-analysis
+   git clone https://github.com/Vasinck/amazon_product_analysis.git
+   cd amazon_product_analysis
    ```
 
 2. 安装依赖库
@@ -44,14 +44,14 @@ dashscope==1.10.0
 3. 准备环境
    - 确保已安装Chrome浏览器
    - 下载与Chrome版本匹配的ChromeDriver，并将其添加到系统PATH中
-   - 在项目根目录下创建`my_product_image`文件夹
+   - 在项目根目录下创建`my_product_images`文件夹
 
 ## 使用说明
 
 ### 准备工作
 
 1. 准备Excel文件（默认名称为`红白蓝五星窗户灯词库_更新_20250318_151413.xlsx`），第一列应为产品搜索词
-2. 将自己的产品图片放入`my_product_image`文件夹，文件名应与Excel中的搜索词一致
+2. 将自己的产品图片放入`my_product_images`文件夹，文件名应与Excel中的搜索词一致
 3. 在代码中更新API密钥和其他配置参数
 
 ### 运行系统
@@ -89,13 +89,13 @@ python amazon_product_analysis.py
 
 1. **API密钥安全**：确保API密钥不被泄露，建议使用环境变量或配置文件管理
 2. **反爬虫机制**：亚马逊有严格的反爬虫机制，过于频繁的请求可能导致IP被封禁
-3. **图片匹配**：确保`my_product_image`中的图片文件名与Excel中的搜索词完全一致
+3. **图片匹配**：确保`my_product_images`中的图片文件名与Excel中的搜索词完全一致
 4. **网络稳定性**：运行过程需要稳定的网络环境，以确保能正常访问亚马逊和API服务
 
 ## 常见问题
 
 ### Q: 为什么系统报告"找不到匹配的产品图片"？
-A: 请检查`my_product_image`文件夹中的图片文件名是否与Excel中的搜索词完全一致。
+A: 请检查`my_product_images`文件夹中的图片文件名是否与Excel中的搜索词完全一致。
 
 ### Q: 为什么爬取亚马逊时出现验证码？
 A: 亚马逊检测到自动化行为，可以尝试减慢请求频率，或使用代理IP。
