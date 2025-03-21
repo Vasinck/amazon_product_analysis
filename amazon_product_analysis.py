@@ -1,6 +1,10 @@
+import os
 import time
 import random
-import os
+import json
+import pandas as pd
+import requests
+from contextlib import contextmanager
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
@@ -14,35 +18,207 @@ from selenium.common.exceptions import (
     WebDriverException,
     StaleElementReferenceException
 )
-import requests
-from contextlib import contextmanager
-from get_my_product_name import extract_my_product_name
+from openai import OpenAI
+from dashscope import MultiModalConversation
 
-# 尝试导入fake_useragent，如果不可用则使用备用用户代理列表
-try:
-    from fake_useragent import UserAgent
-    def get_random_user_agent():
-        ua = UserAgent()
-        return ua.random
-except ImportError:
-    # 备用用户代理列表
-    USER_AGENTS = [
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.164 Safari/537.36',
-    ]
-    def get_random_user_agent():
-        return random.choice(USER_AGENTS)
+#####################################
+# 配置参数
+#####################################
 
-# 添加随机延迟使自动化行为不易被检测
+# 通义千问API配置
+API_KEY = 'xxx'
+BASE_URL = 'xxx'
+MODEL_NAME = 'qwen2.5-vl-72b-instruct'  # 'qvq-72b-preview'
+
+# 图片目录配置
+IMAGE_EXTENSIONS = ['.jpg', '.jpeg', '.png']
+AMAZON_IMAGE_DIRECTORY = './images'
+MY_IMAGE_DIRECTORY = './my_product_images'
+
+# 标注提示配置
+SYSTEM_PROMPT = "You are a helpful assistant."
+USER_PROMPT = '''
+# Role: 竞品分析专家
+
+## 核心任务
+通过分析两张商品图片的关键特征，判断是否为存在竞争关系的同类商品，需特别关注材质差异的否决性原则。
+
+## 处理流程
+
+1. **特征提取阶段**
+   - 视觉分析：商品类别、核心功能、外观设计、品牌标识
+   - 材质判定：材质类型、材质纹理
+   - 属性分析：使用场景、目标人群
+
+2. **竞品判断标准**
+   - 第一否决项：材质类型不同 → 立即判定为非竞品；第二否决项：形状不同 → 立即判定为非竞品；第三否决项：灯泡不一样 → 立即判定为非竞品；
+   - 核心竞争要素（材质形状灯泡相同时需满足至少两项）：
+     ✔️ 同类功能/用途
+     ✔️ 重合的目标消费群体
+     ✔️ 可替代使用场景
+
+3. **输出规范**
+   - 结论格式：【竞品/非竞品】+ 核心判定依据
+   - 需包含：
+     • 材质比对结论
+     • 形状比对结论
+     • 灯泡比对结论
+     • 其他关键相似特征（若为竞品）
+     • 主要差异点（若为非竞品）
+   - 置信度标注：对材质判断的确定性分级（高/中/低）
+
+## 特殊处理原则
+⚠️ 当出现以下情况时要求补充信息：
+- 材质存在复合结构难以判定主要成分
+- 商品存在多功能属性导致用途不明确
+- 出现新兴材质类型需要具体参数确认
+
+强化人设：你会对竞品的标准更加严格。
+输出格式如下
+结论：YES/NO
+理由：XXXXXX
+'''
+
+# 备用用户代理列表
+USER_AGENTS = [
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.114 Safari/537.36',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:89.0) Gecko/20100101 Firefox/89.0',
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.1.1 Safari/605.1.15',
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.164 Safari/537.36',
+]
+
+#####################################
+# 辅助函数
+#####################################
+
+def get_random_user_agent():
+    """获取随机用户代理"""
+    return random.choice(USER_AGENTS)
+
 def random_sleep(min_seconds=1, max_seconds=3):
     """随机睡眠一段时间"""
     sleep_time = random.uniform(min_seconds, max_seconds)
     time.sleep(sleep_time)
 
+def get_keyword(api_key, base_url, model, product_name):
+    """从产品名称中提取关键词"""
+    client = OpenAI(
+        api_key=api_key, 
+        base_url=base_url,
+    )
+    completion = json.loads(client.chat.completions.create(
+        model=model,
+        messages=[
+            {'role': 'system', 'content': 'You are a helpful assistant.'},
+            {'role': 'user', 'content': f'真正的产品名是标题的一部分。就是标题有很多其他修饰成分，你要从标题里面提取出关键词。例如"健康饮食，美妙的一天，当当牌轻食罐头，你值得拥有"，那么关键词就是"轻食罐头" 那么"{product_name}"这是商品名字，请问关键词是什么？请你直接输出关键词，而不要输出其他任何东西，任何说明和提示。'}],
+        ).model_dump_json())['choices'][0]['message']['content']
+    return completion
+
+def extract_my_product_name(file_path, save_to_file=False, output_file="流量词列表.txt"):
+    """从Excel文件中提取第一列(流量词)数据"""
+    try:
+        # 使用pandas读取Excel文件
+        df = pd.read_excel(file_path)
+        
+        # 获取第一列名称(流量词)
+        first_column_name = df.columns[0]
+        
+        # 提取第一列(流量词)的所有数据
+        traffic_words = df[first_column_name].tolist()
+        
+        # 过滤掉NaN值
+        traffic_words = [word for word in traffic_words if pd.notna(word)]
+        
+        # 如果需要保存到文件
+        if save_to_file:
+            with open(output_file, "w", encoding="utf-8") as f:
+                for word in traffic_words:
+                    if pd.notna(word):  # 检查是否为NaN值
+                        f.write(f"{word}\n")
+            print(f"流量词已保存到 '{output_file}' 文件")
+        
+        return traffic_words
+        
+    except FileNotFoundError:
+        print(f"错误: 找不到文件 '{file_path}'")
+        raise
+    except Exception as e:
+        print(f"错误: {e}")
+        raise
+
+def get_img_analyze(my_image_path, amazon_image_path):
+    """分析两张图片是否为竞品关系"""
+    # 构建图片路径格式
+    my_image_url = f"file://{os.path.abspath(my_image_path)}"
+    amazon_image_url = f"file://{os.path.abspath(amazon_image_path)}"
+    
+    messages = [
+        {
+            "role": "system",
+            "content": [{"text": SYSTEM_PROMPT}]
+        },
+        {
+            "role": "user",
+            "content": [
+                {"image": my_image_url},
+                {"image": amazon_image_url},
+                {"text": USER_PROMPT}
+            ]
+        }
+    ]
+    
+    response = MultiModalConversation.call(
+        api_key=API_KEY,
+        model=MODEL_NAME,
+        messages=messages,
+        vl_high_resolution_images=True
+    )
+    
+    return get_img_conclusion(response["output"]["choices"][0]["message"]["content"][0]["text"].strip())
+
+def get_img_conclusion(content):
+    """从分析结果中提取结论"""
+    try:
+        lines = content.split('\n')
+        for line in lines:
+            if '结论：' in line or '结论:' in line:
+                conclusion = line.split('：')[-1].strip() if '：' in line else line.split(':')[-1].strip()
+                return conclusion
+        # 如果找不到显式的结论行，尝试第一行
+        return content.split('\n')[0].split('：')[-1].strip() if '：' in content.split('\n')[0] else content.split('\n')[0].split(':')[-1].strip()
+    except:
+        # 默认返回NO，以避免误判
+        return 'NO'
+
+def get_title_analyze(my_words, title):
+    """分析标题中是否包含关键词"""
+    if not my_words or not title:
+        return 'NO'
+    
+    for word in my_words.split(' '):
+        if word and word.strip() and word.strip().lower() not in title.lower():
+            return 'NO'
+    return 'YES'
+
+def calculate_similarity_level(competitor_count, total_count):
+    """计算相似度级别"""
+    if total_count == 0:
+        return "无法评估"
+    
+    percentage = (competitor_count / total_count) * 100
+    
+    if percentage >= 50:
+        return "高度相似"
+    elif percentage >= 30:
+        return "中度相似"
+    else:
+        return "低度相似"
+
+#####################################
 # 浏览器设置和管理
+#####################################
+
 def configure_chrome_options(headless=False, proxy=None, user_agent=None):
     """配置Chrome浏览器选项"""
     chrome_options = Options()
@@ -114,7 +290,10 @@ def create_driver(headless=False, proxy=None, user_agent=None, window_size=(1366
         if driver:
             driver.quit()
 
+#####################################
 # 元素交互辅助函数
+#####################################
+
 def safe_find_element(driver, locator_strategies, wait_time=10, parent_element=None):
     """使用多种定位策略安全地查找元素"""
     for by, selector in locator_strategies:
@@ -208,7 +387,10 @@ def wait_for_page_load(driver, timeout=30):
     except:
         return False
 
-# 亚马逊特定函数
+#####################################
+# 亚马逊爬虫函数
+#####################################
+
 def open_amazon(driver, url="https://www.amazon.com", wait_time=15):
     """打开亚马逊网站并验证是否正确加载"""
     try:
@@ -490,53 +672,217 @@ def extract_products(driver, search_term, max_products=10):
     print(f"成功提取 {len(products)} 个'{search_term}'的产品")
     return products
 
-# 主函数
-def main():
-    """主函数，协调亚马逊爬取过程"""
-    print("启动亚马逊爬虫")
-    
-    # 搜索商品列表
-    search_terms = extract_my_product_name('./红白蓝五星窗户灯词库_更新_20250318_151413.xlsx')
-    
-    # 确保主要图片目录存在
-    base_dir = "images"
-    os.makedirs(base_dir, exist_ok=True)
-    
-    try:
-        # 使用上下文管理器创建和使用Web驱动程序
-        with create_driver(headless=False) as driver:
-            print("浏览器成功初始化")
+#####################################
+# 整合工作流程
+#####################################
+
+def save_results_to_excel(similarity_results, output_file="产品相似度分析结果.xlsx"):
+    """将结果保存到Excel"""
+    # 转换为DataFrame
+    results_list = []
+    for product, details in similarity_results.items():
+        row = {"产品名": product}
+        row.update(details)
+        
+        # 如果竞品列表是一个列表，将其转换为字符串
+        if "竞品列表" in row and isinstance(row["竞品列表"], list):
+            row["竞品列表"] = ", ".join(row["竞品列表"])
             
-            # 打开亚马逊
-            if open_amazon(driver):
-                
-                # 遍历所有搜索词
-                for search_term in search_terms:
-                    print(f"\n开始处理搜索词: {search_term}")
+        results_list.append(row)
+    
+    df = pd.DataFrame(results_list)
+    
+    # 保存到Excel
+    df.to_excel(output_file, index=False)
+    print(f"结果已保存到 {output_file}")
+
+def integrated_workflow(excel_file='./红白蓝五星窗户灯词库_更新_20250318_151413.xlsx'):
+    """整合的工作流程函数"""
+    
+    # 1. 从Excel中提取搜索词
+    print("步骤1: 从Excel提取搜索词")
+    search_terms = extract_my_product_name(excel_file)
+    print(f"共提取 {len(search_terms)} 个搜索词")
+    
+    # 确保图片目录存在
+    os.makedirs("images", exist_ok=True)
+    os.makedirs(MY_IMAGE_DIRECTORY, exist_ok=True)
+    
+    # 结果字典
+    similarity_results = {}
+    
+    # 2. 对每个搜索词进行处理
+    for idx, search_term in enumerate(search_terms):
+        print(f"\n处理进度: [{idx+1}/{len(search_terms)}]")
+        print(f"开始处理搜索词: {search_term}")
+        
+        # 检查我的产品图片是否存在
+        my_product_file = None
+        for file in os.listdir(MY_IMAGE_DIRECTORY):
+            if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
+                product_name = os.path.splitext(file)[0]
+                if search_term == product_name:
+                    my_product_file = os.path.join(MY_IMAGE_DIRECTORY, file)
+                    break
+        
+        if not my_product_file:
+            print(f"警告: 找不到与搜索词 '{search_term}' 匹配的产品图片")
+            similarity_results[search_term] = {
+                "相似度": "无法评估",
+                "原因": "找不到匹配的产品图片",
+                "竞品数量": 0,
+                "总商品数": 0,
+                "竞品百分比": 0,
+                "竞品列表": []
+            }
+            continue
+        
+        # 爬取亚马逊产品
+        amazon_dir = os.path.join("images", search_term)
+        if not os.path.exists(amazon_dir) or len([f for f in os.listdir(amazon_dir) if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS]) == 0:
+            os.makedirs(amazon_dir, exist_ok=True)
+            
+            try:
+                # 使用上下文管理器创建和使用Web驱动程序
+                with create_driver(headless=False) as driver:
+                    print("浏览器成功初始化")
                     
-                    # 搜索产品
-                    if search_amazon(driver, search_term):
-                        # 提取产品信息并下载图片
-                        products = extract_products(driver, search_term, max_products=10)
-                        
-                        if not products:
-                            print(f"未能提取到'{search_term}'的产品信息")
-                        
-                        # 暂停以防止被检测
-                        random_sleep(3, 5)
+                    # 打开亚马逊
+                    if open_amazon(driver):
+                        # 搜索产品
+                        if search_amazon(driver, search_term):
+                            # 提取产品信息并下载图片
+                            products = extract_products(driver, search_term, max_products=100)
+                            
+                            if not products:
+                                print(f"未能提取到'{search_term}'的产品信息")
+                                similarity_results[search_term] = {
+                                    "相似度": "无法评估",
+                                    "原因": "未找到相关产品",
+                                    "竞品数量": 0,
+                                    "总商品数": 0,
+                                    "竞品百分比": 0,
+                                    "竞品列表": []
+                                }
+                                continue
+                        else:
+                            print(f"搜索 '{search_term}' 失败")
+                            similarity_results[search_term] = {
+                                "相似度": "无法评估",
+                                "原因": "搜索失败",
+                                "竞品数量": 0,
+                                "总商品数": 0,
+                                "竞品百分比": 0,
+                                "竞品列表": []
+                            }
+                            continue
                     else:
-                        print(f"搜索 '{search_term}' 失败")
+                        print("打开亚马逊网站失败")
+                        similarity_results[search_term] = {
+                            "相似度": "无法评估",
+                            "原因": "打开亚马逊失败",
+                            "竞品数量": 0,
+                            "总商品数": 0,
+                            "竞品百分比": 0,
+                            "竞品列表": []
+                        }
+                        continue
+            
+            except WebDriverException as e:
+                print(f"WebDriver错误: {e}")
+                similarity_results[search_term] = {
+                    "相似度": "无法评估",
+                    "原因": f"WebDriver错误: {str(e)[:100]}",
+                    "竞品数量": 0,
+                    "总商品数": 0,
+                    "竞品百分比": 0,
+                    "竞品列表": []
+                }
+                continue
+            except Exception as e:
+                print(f"意外错误: {e}")
+                similarity_results[search_term] = {
+                    "相似度": "无法评估",
+                    "原因": f"意外错误: {str(e)[:100]}",
+                    "竞品数量": 0,
+                    "总商品数": 0,
+                    "竞品百分比": 0,
+                    "竞品列表": []
+                }
+                continue
+        else:
+            print(f"使用已爬取的图片 ({len([f for f in os.listdir(amazon_dir) if os.path.splitext(f)[1].lower() in IMAGE_EXTENSIONS])} 张)")
+        
+        # 获取我的产品关键词
+        try:
+            my_product_keywords = get_keyword(
+                API_KEY, 
+                BASE_URL, 
+                'qwen-max-2025-01-25', 
+                search_term
+            )
+            print(f"产品 '{search_term}' 的关键词: {my_product_keywords}")
+        except Exception as e:
+            print(f"获取关键词出错: {e}")
+            my_product_keywords = search_term
+        
+        # 计算相似度
+        total_count = 0
+        competitor_count = 0
+        competitors = []
+        
+        # 遍历亚马逊产品目录中的所有图片
+        for file in os.listdir(amazon_dir):
+            if os.path.splitext(file)[1].lower() in IMAGE_EXTENSIONS:
+                total_count += 1
+                amazon_product_file = os.path.join(amazon_dir, file)
                 
-                print("\n所有搜索词处理完毕")
-            else:
-                print("打开亚马逊网站失败")
+                try:
+                    print(f"分析产品 '{file}'...")
+                    # 图像分析
+                    img_conclusion = get_img_analyze(my_product_file, amazon_product_file)
+                    print(f"图像分析结论: {img_conclusion}")
+                    
+                    # 标题分析
+                    title_conclusion = get_title_analyze(my_product_keywords, file)
+                    print(f"标题分析结论: {title_conclusion}")
+                    
+                    # 综合结论
+                    conclusion = 'YES' if img_conclusion == 'YES' and title_conclusion == 'YES' else 'NO'
+                    
+                    if conclusion == 'YES':
+                        competitor_count += 1
+                        competitors.append(file)
+                        print(f"产品 '{file}' 是竞品 ✅")
+                    else:
+                        print(f"产品 '{file}' 不是竞品 ❌")
+                except Exception as e:
+                    print(f"分析产品时出错 '{file}': {e}")
+        
+        # 计算相似度级别
+        similarity_level = calculate_similarity_level(competitor_count, total_count)
+        
+        # 将结果添加到字典
+        similarity_results[search_term] = {
+            "相似度": similarity_level,
+            "竞品数量": competitor_count,
+            "总商品数": total_count,
+            "竞品百分比": round((competitor_count / total_count * 100), 2) if total_count > 0 else 0,
+            "竞品列表": competitors
+        }
+        
+        # 每处理完一个搜索词就保存一次中间结果
+        save_results_to_excel(similarity_results)
     
-    except WebDriverException as e:
-        print(f"WebDriver错误: {e}")
-    except Exception as e:
-        print(f"意外错误: {e}")
+    # 3. 输出最终结果并保存到Excel
+    print("\n步骤3: 输出最终结果并保存到Excel")
+    save_results_to_excel(similarity_results)
     
-    print("亚马逊爬虫完成")
+    return similarity_results
+
+#####################################
+# 主程序
+#####################################
 
 if __name__ == "__main__":
-    main()
+    integrated_workflow()
